@@ -1,0 +1,22 @@
+# 构建产物
+bin/
+obj/
+publish/
+
+# 编辑器
+.vs/
+*.user
+*.suo
+.vscode/
+
+# 本地备份文件（.bak-frame1 / .bak-settings2 之类）
+*.bak
+*.bak-*
+
+# 根目录下的临时截图，保留 docs 里的正式图
+/*.png
+/*.jpg
+
+# 系统
+Thumbs.db
+desktop.ini
