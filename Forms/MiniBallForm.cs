@@ -13,6 +13,11 @@ public class MiniBallForm : Form
     public event EventHandler? Restored;
 
     private const int WS_EX_LAYERED = 0x80000;
+    private const int WS_EX_NOACTIVATE = 0x08000000;
+    private const int WS_EX_TOOLWINDOW = 0x80;
+
+    /// <summary>点击时不抢焦点：否则游戏会因失焦静音/暂停</summary>
+    protected override bool ShowWithoutActivation => true;
     private const int ULW_ALPHA = 0x02;
     private const byte AC_SRC_ALPHA = 0x01;
 
@@ -78,7 +83,7 @@ public class MiniBallForm : Form
         get
         {
             var cp = base.CreateParams;
-            cp.ExStyle |= WS_EX_LAYERED;
+            cp.ExStyle |= WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
             return cp;
         }
     }
