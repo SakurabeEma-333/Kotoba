@@ -24,6 +24,13 @@ public static class ConfigStore
             if (!File.Exists(FilePath)) return CreateDefault();
             var json = File.ReadAllText(FilePath);
             var cfg = JsonSerializer.Deserialize<AppConfig>(json, JsonOpt) ?? CreateDefault();
+
+            // 手工把 JSON 改成 "Profiles": null 不该被当成配置损坏而整份改名
+            cfg.Profiles ??= new List<Profile>();
+            cfg.Categories ??= new List<PresetCategory>();
+            cfg.Presets ??= new List<PromptPreset>();
+            foreach (var pc in cfg.Categories) pc.Presets ??= new List<PromptPreset>();
+
             if (cfg.Profiles.Count == 0) cfg.Profiles.Add(new Profile { Name = "默认" });
 
             // 迁移：旧版扁平 Presets → 分类结构（系统 + 我的）
@@ -65,9 +72,15 @@ public static class ConfigStore
             Directory.CreateDirectory(Dir);
             File.WriteAllText(FilePath, JsonSerializer.Serialize(cfg, JsonOpt));
         }
-        catch
+        catch (Exception ex)
         {
-            // 配置保存失败不影响运行
+            // 保存失败不影响运行，但写日志，别静默吞掉
+            try
+            {
+                File.AppendAllText(Path.Combine(Path.GetTempPath(), "kotoba-save-error.txt"),
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  " + ex.Message + Environment.NewLine);
+            }
+            catch { }
         }
     }
 

@@ -31,6 +31,9 @@ public class TranslationPipeline
         "逐字输出图片中的所有日文文字，保留原文标点与换行。只输出文字本身，不要翻译，不要任何说明。";
 
     private readonly Dictionary<string, string> _cache = new(StringComparer.Ordinal);
+    /// <summary>插入顺序，用于 FIFO 淘汰</summary>
+    private readonly Queue<string> _cacheOrder = new();
+    private const int MaxCacheEntries = 8000;
     private bool _cacheLoaded;
     private DateTime _lastCacheSave = DateTime.MinValue;
 
@@ -47,7 +50,7 @@ public class TranslationPipeline
             if (!File.Exists(CachePath)) return;
             var dict = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(CachePath));
             if (dict != null)
-                foreach (var kv in dict) _cache[kv.Key] = kv.Value;
+                foreach (var kv in dict) PutCache(kv.Key, kv.Value);
         }
         catch { /* 缓存坏了就当没有 */ }
     }
@@ -79,6 +82,25 @@ public class TranslationPipeline
         _cache.Clear();
         _cacheLoaded = true;   // 别再回头把旧文件读进来
         try { if (File.Exists(CachePath)) File.Delete(CachePath); } catch { }
+    }
+
+    /// <summary>写缓存，超过上限就按插入顺序淘汰最早的（之前无上限，cache.json 只增不减）</summary>
+    private void PutCache(string key, string value)
+    {
+        if (_cache.ContainsKey(key))
+        {
+            _cache[key] = value;
+            return;
+        }
+
+        _cache[key] = value;
+        _cacheOrder.Enqueue(key);
+
+        while (_cacheOrder.Count > MaxCacheEntries)
+        {
+            var old = _cacheOrder.Dequeue();
+            _cache.Remove(old);
+        }
     }
 
     public void ClearCache() => _cache.Clear();
@@ -133,7 +155,7 @@ public class TranslationPipeline
             pairs = await TranslateSentencesAsync(sentences, profile, cfg, sysPrompt, historyList, ct).ConfigureAwait(false);
         }
 
-        _cache[key] = SerializePairs(pairs);
+        if (pairs.All(p => !string.IsNullOrWhiteSpace(p.Dst))) PutCache(key, SerializePairs(pairs));
         SaveCache();
         return new StepResult(source, JoinTargets(pairs), false, sw.ElapsedMilliseconds, pairs);
     }
@@ -256,7 +278,7 @@ public class TranslationPipeline
         }
         else
         {
-            var numbered = string.Join("\n", sentences.Select((s, i) => $"{i + 1}. {s}"));
+            var numbered = string.Join("\n", sentences.Select((s, i) => $"{i + 1}. " + s.Replace("\r", "").Replace("\n", " ")));
             var userText =
                 $"把下面 {sentences.Count} 段日文分别翻译成简体中文。\n" +
                 $"要求：严格输出 {sentences.Count} 行，每行格式为「序号. 译文」；" +
@@ -280,7 +302,7 @@ public class TranslationPipeline
             finalPairs = BuildPairs(sentences, results);
         }
 
-        _cache[key] = SerializePairs(finalPairs);
+        if (finalPairs.All(p => !string.IsNullOrWhiteSpace(p.Dst))) PutCache(key, SerializePairs(finalPairs));
         SaveCache();
         return new StepResult(source, JoinTargets(finalPairs), false, sw.ElapsedMilliseconds, finalPairs);
     }
@@ -331,7 +353,7 @@ public class TranslationPipeline
         string sysPrompt, IReadOnlyList<(string Src, string Dst)> history,
         CancellationToken ct)
     {
-        var numbered = string.Join("\n", sentences.Select((s, i) => $"{i + 1}. {s}"));
+        var numbered = string.Join("\n", sentences.Select((s, i) => $"{i + 1}. " + s.Replace("\r", "").Replace("\n", " ")));
 
         var userText =
             $"把下面 {sentences.Count} 段日文分别翻译成简体中文。\n" +
@@ -543,7 +565,7 @@ public class TranslationPipeline
                 null, true, ct, jsonMode: true).ConfigureAwait(false);
 
             sentences = ParseSentenceArray(segReply, source);
-            _cache[segKey] = JsonSerializer.Serialize(sentences);
+            PutCache(segKey, JsonSerializer.Serialize(sentences));
         }
 
         // ③ 翻译：用用户选的模型，深度思考跟随设置（质量优先）
@@ -561,7 +583,7 @@ public class TranslationPipeline
         var historyList = history ?? Array.Empty<(string Src, string Dst)>();
         var pairs = await TranslateSentencesAsync(sentences, profile, cfg, sys, historyList, ct).ConfigureAwait(false);
 
-        _cache[transKey] = SerializePairs(pairs);
+        if (pairs.All(p => !string.IsNullOrWhiteSpace(p.Dst))) PutCache(transKey, SerializePairs(pairs));
         SaveCache();
 
         return new StepResult(source, JoinTargets(pairs), false, sw.ElapsedMilliseconds, pairs);
@@ -589,40 +611,8 @@ public class TranslationPipeline
         }
         catch { return new() { fallback }; }
     }
-
-    private List<(string Src, string Dst)> ParseSegmented(string reply, string fallbackSource)
-    {
-        try
-        {
-            using var doc = JsonDocument.Parse(reply);
-            JsonElement arr;
-            if (doc.RootElement.ValueKind == JsonValueKind.Array)
-                arr = doc.RootElement;
-            else if (doc.RootElement.TryGetProperty("pairs", out var p) && p.ValueKind == JsonValueKind.Array)
-                arr = p;
-            else
-                return new List<(string, string)> { (fallbackSource, CleanTranslation(reply)) };
-
-            var list = new List<(string, string)>();
-            foreach (var item in arr.EnumerateArray())
-            {
-                string ja = item.TryGetProperty("ja", out var j) ? (j.GetString() ?? "") : "";
-                string zh = item.TryGetProperty("zh", out var z) ? (z.GetString() ?? "") : "";
-                if (zh.Length > 0) list.Add((ja, zh));
-            }
-            return list.Count > 0
-                ? list
-                : new List<(string, string)> { (fallbackSource, CleanTranslation(reply)) };
-        }
-        catch
-        {
-            // JSON 崩了就退化成整段，至少不丢内容
-            return new List<(string, string)> { (fallbackSource, CleanTranslation(reply)) };
-        }
-    }
     // ---------------- 辅助 ----------------
 
-    /// <summary>
     /// <summary>一两行、字数不多的画面不必再调分段模型，直接当一整句翻译（省一次请求，约 1~1.5 秒）</summary>
     private static bool IsSingleSentenceScreen(string src)
     {
@@ -689,14 +679,16 @@ public class TranslationPipeline
         return d;
     }
 
-    /// <summary>严格匹配上下文时，把历史对话的指纹拼进缓存 key（默认不拼，否则几乎永远命中不了）</summary>
+    /// <summary>严格匹配上下文时拼历史指纹；另外总是带上「思考开关」标记（它影响译文，不能共用旧缓存）</summary>
     private static string ContextKeyPart(AppConfig cfg, IReadOnlyList<(string Src, string Dst)>? history)
     {
-        if (!cfg.StrictContextCache || history == null || history.Count == 0) return "";
+        var tag = cfg.ThinkingEnabled ? "|t1" : "|t0";
+
+        if (!cfg.StrictContextCache || history == null || history.Count == 0) return tag;
 
         var sb = new StringBuilder();
         foreach (var (s, d) in history) sb.Append(s).Append('\u0001').Append(d).Append('\u0002');
-        return "|h" + Hash(sb.ToString());
+        return tag + "|h" + Hash(sb.ToString());
     }
 
     private static string Hash(string s)

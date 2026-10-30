@@ -52,6 +52,15 @@ public class Profile
     /// <summary>识别框取景带浓度 0~100（越高越明显）</summary>
     public int CaptureOpacity { get; set; } = 45;
 
+    /// <summary>顶栏（按钮那条）背景是否透明；true = 只有按钮和文字，没有黑底</summary>
+    public bool BarTransparent { get; set; } = true;
+
+    /// <summary>是否绘制捕获框的边框线</summary>
+    public bool ShowBorderLine { get; set; } = true;
+
+    /// <summary>是否绘制四角握把</summary>
+    public bool ShowCornerGrips { get; set; } = true;
+
     /// <summary>边缘带宽度（逻辑像素）。同时是缩放命中区宽度，改小会让抓取变难</summary>
     public int CaptureBandWidth { get; set; } = 14;
 

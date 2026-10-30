@@ -64,7 +64,6 @@ internal static class Program
     [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
     [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hWnd);
 
-    [STAThread]
     /// <summary>崩溃兜底：日志写到 %TEMP%\kotoba-crash-*.log，并弹窗告诉用户文件在哪</summary>
     private static void ReportCrash(Exception? ex)
     {
@@ -82,6 +81,7 @@ internal static class Program
         catch { }
     }
 
+    [STAThread]
     private static void Main(string[] args)
     {
         // 必须在创建任何窗口前声明 DPI 感知，否则 150% 缩放下窗口会缩成 2/3

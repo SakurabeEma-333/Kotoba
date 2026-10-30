@@ -195,7 +195,11 @@ public class ContextForm : Form
         _txtContext.SelectionStart = _txtContext.TextLength;
         _txtContext.ScrollToCaret();
         _lblStatus.Text = $"已导入 {added} 条，共 {_history.Count} 条";
+        HistoryImported?.Invoke(this, EventArgs.Empty);
     }
+
+    /// <summary>导入上下文后触发，让调用方立即落盘</summary>
+    public event EventHandler? HistoryImported;
 
     /// <summary>
     /// 记忆超过上限时从最早的段开始丢；带 ★ 的段永远保留，

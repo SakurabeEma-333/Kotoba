@@ -129,7 +129,9 @@ public static class DeepSeekClient
             ["model"] = model,
             ["messages"] = messages,
             ["temperature"] = 0,
-            ["stream"] = true
+            ["stream"] = true,
+            // 让流式最后多发一个带 usage 的块；不要求的话流式调用的 token 完全不计
+            ["stream_options"] = new { include_usage = true }
         };
         if (disableThinking) payload["thinking"] = new { type = "disabled" };
 
@@ -163,6 +165,17 @@ public static class DeepSeekClient
             try
             {
                 using var doc = JsonDocument.Parse(data);
+
+                // 流式最后一块带 usage（choices 为空）；不解析的话这块 token 就漏统计了
+                if (doc.RootElement.TryGetProperty("usage", out var usage) &&
+                    usage.TryGetProperty("prompt_tokens", out var ptUse) &&
+                    ptUse.ValueKind == JsonValueKind.Number)
+                {
+                    int compUse = usage.TryGetProperty("completion_tokens", out var ctUse) && ctUse.ValueKind == JsonValueKind.Number
+                        ? ctUse.GetInt32() : 0;
+                    UsageTracker.Add(ptUse.GetInt32(), compUse);
+                }
+
                 if (doc.RootElement.TryGetProperty("choices", out var choices) && choices.GetArrayLength() > 0)
                 {
                     var ch = choices[0];

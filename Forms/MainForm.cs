@@ -30,8 +30,6 @@ public partial class MainForm : Form
 
     private readonly TextBox _txtName = new();
     private readonly TextBox _txtPrompt = new();
-    private readonly ComboBox _cmbModel = new();
-    private readonly TextBox _txtApiKey = new();
     private readonly CheckBox _chkShowSource = new();
     private readonly NumericUpDown _numFont = new();
     private readonly TrackBar _trkOpacity = new();
@@ -55,6 +53,10 @@ public partial class MainForm : Form
     private CancellationTokenSource? _cts;
     private bool _busy;
     private bool _sessionRunning;
+    private bool _autoPausedByBall;
+
+    /// <summary>输入框防抖用：停止 500ms 后才真正写盘</summary>
+    private readonly System.Windows.Forms.Timer _persistTimer = new() { Interval = 500 };
     private MiniBallForm? _miniBall;
 
     /// <summary>存上下文用：中文不转 \uXXXX，config.json 里能直接看懂</summary>
@@ -103,9 +105,8 @@ public partial class MainForm : Form
         // F8 全局热键：游戏在前台也能触发
         if (m.Msg == WM_HOTKEY && m.WParam.ToInt32() == HOTKEY_ID)
         {
-            try { File.AppendAllText(Path.Combine(Path.GetTempPath(), "kotoba-hotkey.txt"),
-                $"`n[{DateTime.Now:HH:mm:ss}] HIT session={_sessionRunning} busy={_busy} cap={_capture != null} overlay={_overlay != null}"); } catch { }
-            if (_sessionRunning && !_busy)
+            // 小球状态下不响应：窗口都藏着，翻了也看不见，白花钱
+            if (_sessionRunning && !_busy && _miniBall == null)
             {
                 _ = TranslateOnceAsync();
             }
@@ -136,6 +137,15 @@ public partial class MainForm : Form
     public MainForm(string? shotPath = null)
     {
         _cfg = ConfigStore.Load();
+
+        // 启动时恢复深色主题（之前只在 --dark 或关闭设置窗时生效，重启就丢）
+        if (_cfg.DarkTheme) Theme.Dark = true;
+
+        _persistTimer.Tick += (_, _) =>
+        {
+            _persistTimer.Stop();
+            Persist();
+        };
 
         // 旧版内置提示词在配置里，现在改由代码内置：启动时迁掉旧分类（保留用户自己加的）
         if (PresetMigration.Run(_cfg)) ConfigStore.Save(_cfg);
@@ -304,7 +314,7 @@ public partial class MainForm : Form
             if (_loading || _current == null) return;
             _current.Name = _txtName.Text;
             RefreshProfileListLabels();
-            Persist();
+            SchedulePersist();
         };
 
         AddRow("系统提示词", _txtPrompt, 210);
@@ -316,7 +326,7 @@ public partial class MainForm : Form
         {
             if (_loading || _current == null) return;
             _current.SystemPrompt = _txtPrompt.Text;
-            Persist();
+            SchedulePersist();
         };
 
         var promptBtns = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight };
@@ -572,7 +582,10 @@ public partial class MainForm : Form
         if (_current == null) return;
 
         using var dlg = new ContextForm(_current, _cfg, _history);
-        if (dlg.ShowDialog(this) != DialogResult.OK) return;   // 点 × 或 ESC 就不保存
+        dlg.HistoryImported += (_, _) => SaveHistoryToProfile();
+        var result = dlg.ShowDialog(this);
+        // 只要生成过总结就保存（否则点 × 关窗会把总结丢掉）；没总结时仍尊重取消
+        if (result != DialogResult.OK && !dlg.MemoryUpdated) return;
 
         if (dlg.MemoryUpdated)
         {
@@ -612,6 +625,9 @@ public partial class MainForm : Form
     {
         if (_current == null) return;
 
+        // 会话中换配置会把旧捕获框的坐标写进新配置，先停会话
+        if (_sessionRunning) StopSession(restoreWindow: true);
+
         var copy = _current.Clone();
         copy.Id = Guid.NewGuid().ToString("N");
         copy.Name = _current.Name + " 副本";
@@ -633,8 +649,6 @@ public partial class MainForm : Form
         _txtName.Text = _current.Name;
         // TextBox 只认 \r\n，预设/默认提示词里是 \n，不转就全挤成一行
         _txtPrompt.Text = NormalizeNewlines(_current.SystemPrompt);
-        _cmbModel.Text = _current.Model;
-        _txtApiKey.Text = _cfg.ApiKey;
         _chkShowSource.Checked = _current.ShowSource;
         _numFont.Value = Math.Clamp(_current.FontSize, (int)_numFont.Minimum, (int)_numFont.Maximum);
         _trkOpacity.Value = Math.Clamp(_current.BgOpacity, _trkOpacity.Minimum, _trkOpacity.Maximum);
@@ -736,7 +750,6 @@ public partial class MainForm : Form
         ApplyRuntimeStyle();
     }
 
-    /// <summary>把最新外观参数立即应用到运行中的浮窗</summary>
     /// <summary>把捕获框和译文窗的位置按默认比例重新排一遍</summary>
     private void ResetWindowLayout()
     {
@@ -766,7 +779,7 @@ public partial class MainForm : Form
                 vs.X + (int)(_current.RoiX * vs.Width),
                 vs.Y + (int)(_current.RoiY * vs.Height),
                 Math.Max(200, (int)(_current.RoiW * vs.Width)),
-                Math.Max(120, (int)(_current.RoiH * vs.Height)) + CaptureForm.BarHeight);
+                Math.Max(120, (int)(_current.RoiH * vs.Height)));
             _capture.ApplyBounds(roi, _current.Locked);
         }
 
@@ -785,11 +798,17 @@ public partial class MainForm : Form
         if (_current == null) return;
         _overlay?.ApplyStyle(_current.FontSize, _current.BgOpacity, DeviceDpi);
         _capture?.SetCaptureOpacity(_current.CaptureOpacity);
+        if (_capture != null) _capture.BarTransparent = _current.BarTransparent;
+        if (_capture != null) _capture.ShowBorderLine = _current.ShowBorderLine;
+        if (_capture != null) _capture.ShowCornerGrips = _current.ShowCornerGrips;
         _capture?.SetFrameStyle(_current.CaptureBandWidth, _current.CaptureLineWidth, _current.CaptureRevealPad);
     }
 
     private void NewProfile()
     {
+        // 会话中换配置会把旧捕获框的坐标写进新配置，先停会话
+        if (_sessionRunning) StopSession(restoreWindow: true);
+
         var p = new Profile { Name = "新配置 " + (_cfg.Profiles.Count + 1) };
         _cfg.Profiles.Add(p);
         _cfg.LastProfileId = p.Id;
@@ -808,6 +827,10 @@ public partial class MainForm : Form
         }
 
         var p = _cfg.Profiles[i];
+
+        // 会话中换配置会把旧捕获框的坐标写进新配置，先停会话
+        if (_sessionRunning) StopSession(restoreWindow: true);
+
         DialogResult answer = DialogResult.No;
         HideOverlaysTemporarily(() =>
         {
@@ -823,12 +846,26 @@ public partial class MainForm : Form
         RefreshProfileList();
     }
 
+    /// <summary>输入框这类高频改动做 500ms 防抖，避免每敲一个字就整份写盘</summary>
+    private void SchedulePersist()
+    {
+        _persistTimer.Stop();
+        _persistTimer.Start();
+    }
+
     private void Persist() => ConfigStore.Save(_cfg);
 
     /// <summary>缩成小球：藏起捕获框和译文窗，只留一个可点还原的小球（会话继续跑）</summary>
     private void MinimizeToBall()
     {
         if (!_sessionRunning || _miniBall != null) return;
+
+        // 收起时暂停自动翻译：看不见结果还在后台翻，等于白花钱
+        _autoPausedByBall = _autoTimer != null;
+        _autoTimer?.Stop();
+        _autoTimer?.Dispose();
+        _autoTimer = null;
+        _capture?.SetAutoState(false);
 
         var vs = VirtualScreenRect;
         _miniBall = new MiniBallForm();
@@ -861,6 +898,11 @@ public partial class MainForm : Form
             KeepOnTop(_overlay);
             if (_current != null) _overlay.ApplyStyle(_current.FontSize, _current.BgOpacity, DeviceDpi);
         }
+
+        // 还原后把自动模式恢复回去
+        if (_autoPausedByBall && _current?.AutoMode == true) StartAutoTimer();
+        _autoPausedByBall = false;
+        _capture?.SetAutoState(_current?.AutoMode == true);
     }
 
     private void OnStartClicked()
@@ -895,10 +937,13 @@ public partial class MainForm : Form
             vs.X + (int)(_current.RoiX * vs.Width),
             vs.Y + (int)(_current.RoiY * vs.Height),
             Math.Max(200, (int)(_current.RoiW * vs.Width)),
-            Math.Max(120, (int)(_current.RoiH * vs.Height)) + CaptureForm.BarHeight);
+            Math.Max(120, (int)(_current.RoiH * vs.Height)));
 
         _capture = new CaptureForm(_current.Name);
         _capture.SetCaptureOpacity(_current.CaptureOpacity);
+        _capture.BarTransparent = _current.BarTransparent;
+        _capture.ShowBorderLine = _current.ShowBorderLine;
+        _capture.ShowCornerGrips = _current.ShowCornerGrips;
         _capture.SetFrameStyle(_current.CaptureBandWidth, _current.CaptureLineWidth, _current.CaptureRevealPad);
         _capture.TranslateRequested += async (_, _) => await TranslateOnceAsync();
         _capture.RetranslateRequested += async (_, _) => await TranslateOnceAsync(ignoreCache: true);
@@ -1133,6 +1178,8 @@ public partial class MainForm : Form
         finally
         {
             _busy = false;
+            // 翻译完刷新用量标签，否则永远显示启动那一刻的数字
+            try { _lblUsage.Text = UsageTracker.Summary(); } catch { }
         }
     }
 

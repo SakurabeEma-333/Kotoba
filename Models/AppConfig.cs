@@ -39,7 +39,7 @@ public class AppConfig
     public bool DarkTheme { get; set; } = false;
 
     /// <summary>翻译快捷键，如 "F8" / "Ctrl+F8" / "Alt+F8"</summary>
-    public string Hotkey { get; set; } = "F8";
+    public string Hotkey { get; set; } = "Ctrl+F8";
 
     /// <summary>主窗口位置和大小（x,y,w,h）</summary>
     public string MainBounds { get; set; } = "";

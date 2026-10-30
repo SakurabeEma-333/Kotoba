@@ -60,6 +60,7 @@ public class MiniBallForm : Form
             _moved = false;
             _dragStart = Cursor.Position;
             _windowStart = Location;
+            Capture = true;   // 拖出窗口范围也要能跟手
         };
 
         MouseMove += (_, _) =>
@@ -74,6 +75,7 @@ public class MiniBallForm : Form
         {
             if (!_dragging) return;
             _dragging = false;
+            Capture = false;
             if (!_moved) Restored?.Invoke(this, EventArgs.Empty);
         };
     }

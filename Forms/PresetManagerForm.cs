@@ -12,7 +12,6 @@ public class PresetManagerForm : Form
     private readonly ListView _lstPresets = new();
     private readonly Label _lblInfo = new();
 
-    private const string SystemCategoryName = "系统（内置）";
 
     /// <summary>内置分类名（来自 PromptPresets；「特殊」由设置里的开关控制是否显示）</summary>
     private List<string> BuiltInCats =>

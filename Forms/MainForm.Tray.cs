@@ -10,13 +10,6 @@ public partial class MainForm
     {
         UnregisterHotKey(Handle, HOTKEY_ID);
         HotkeyRegistered = RegisterSpec(_cfg.Hotkey, HOTKEY_ID);
-
-        try
-        {
-            File.WriteAllText(Path.Combine(Path.GetTempPath(), "kotoba-hotkey.txt"),
-                $"translate={_cfg.Hotkey} ok={HotkeyRegistered}");
-        }
-        catch { }
     }
 
     /// <summary>把 "Ctrl+F8" 这种写法注册成全局热键，返回是否成功</summary>

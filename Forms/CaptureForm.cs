@@ -293,6 +293,15 @@ public class CaptureForm : Form
     // ---------------- 状态 ----------------
 
     /// <summary>设置边缘外观：带宽（=命中区宽）、细线粗细、靠近多近才展开</summary>
+    /// <summary>顶栏背景是否透明（true = 不画黑底，只留按钮和文字）</summary>
+    public bool BarTransparent { get; set; } = true;
+
+    /// <summary>是否绘制边框线</summary>
+    public bool ShowBorderLine { get; set; } = true;
+
+    /// <summary>是否绘制四角握把</summary>
+    public bool ShowCornerGrips { get; set; } = true;
+
     public void SetFrameStyle(int bandWidth, int lineWidth, int revealPad)
     {
         _bandW = Math.Clamp(bandWidth, 4, 30);
@@ -416,21 +425,33 @@ public class CaptureForm : Form
             // ① 顶栏底 + 标题（只在靠近时出现）
             if (!Locked && _barArmed)
             {
-                using var barBrush = new SolidBrush(BarColor);
-                g.FillRectangle(barBrush, 0, 0, w, BarHeight);
+                if (!BarTransparent)
+                {
+                    using var barBrush = new SolidBrush(BarColor);
+                    g.FillRectangle(barBrush, 0, 0, w, BarHeight);
+                }
 
                 using var titleBrush = new SolidBrush(Color.Gainsboro);
                 using var titleFmt = new StringFormat { LineAlignment = StringAlignment.Center };
                 int titleRight = _btnRects[0].X - 8;
                 var titleRect = new Rectangle(10, 0, Math.Max(20, titleRight - 10), BarHeight);
+
+                if (BarTransparent)
+                {
+                    // 无底色时加一层暗色投影，否则浅色画面上完全看不清
+                    using var shadow = new SolidBrush(Color.FromArgb(190, 0, 0, 0));
+                    var shadowRect = new Rectangle(titleRect.X + 1, titleRect.Y + 1, titleRect.Width, titleRect.Height);
+                    g.DrawString(_title, font, shadow, shadowRect, titleFmt);
+                }
+
                 g.DrawString(_title, font, titleBrush, titleRect, titleFmt);
             }
 
             // ② 按钮：描边 + 文字，内部留 alpha=1 的不可见命中垫
             DrawButtons(g, font);
 
-            // ③ 取景带
-            if (!Locked && _bandVisible)
+            // ③ 取景带（浓度 0 = 完全不画，只留细线）
+            if (!Locked && _bandVisible && _captureOpacity > 0)
             {
                 float k = Math.Clamp(_captureOpacity, 0, 100) / 100f;
                 int rgb = (int)(34 + 190 * k);
@@ -447,12 +468,12 @@ public class CaptureForm : Form
             var baseColor = Locked ? BorderLocked : BorderIdle;
             var color = Color.FromArgb(Locked ? 210 : 110, baseColor);
             int inset = _bandW;
-            using (var pen = new Pen(color, Math.Max(1, _lineW)))
+            using (var pen = new Pen(ShowBorderLine ? color : Color.Transparent, Math.Max(1, _lineW)))
                 g.DrawRectangle(pen, inset, BarHeight + inset,
                     Math.Max(1, w - inset * 2 - 1), Math.Max(1, h - BarHeight - inset * 2 - 1));
 
             // 四角握把：直接标出能拖角的位置，比盲抓 14px 的边可靠
-            if (!Locked)
+            if (!Locked && ShowCornerGrips)
             {
                 float lw = Math.Max(2f, DeviceDpi / 96f * 2f);
                 using var gripPen = new Pen(color, lw);
@@ -515,7 +536,7 @@ public class CaptureForm : Form
                 g.DrawRectangle(pen, r.X + borderW / 2f, r.Y + borderW / 2f,
                     r.Width - borderW, r.Height - borderW);
 
-            var text = i == 2 && _autoOn ? "自动中" : BtnTexts[i];
+            var text = i == 3 && _autoOn ? "自动中" : BtnTexts[i];
 
             // 1px 暗色投影：亮背景上白字也能认清（没有底色可用，只能靠描边）
             using (var shadowBrush = new SolidBrush(Color.FromArgb(170, 0, 0, 0)))

@@ -106,7 +106,6 @@ public class OverlayForm : Form
 
     private DateTime _lastRender = DateTime.MinValue;
 
-    public bool ClickThrough { get; private set; }
 
     public event EventHandler? BoundsChanged;
 
@@ -123,6 +122,8 @@ public class OverlayForm : Form
     public OverlayForm()
     {
         FormBorderStyle = FormBorderStyle.None;
+        MaximizeBox = false;
+        MinimizeBox = false;
         Text = "Kotoba-Overlay";
         ShowInTaskbar = false;
         TopMost = true;
@@ -221,7 +222,6 @@ public class OverlayForm : Form
     private float _thumbH = 30f;
 
     private string _status = "待机";
-    private DateTime _statusUntil = DateTime.MaxValue;
     private System.Windows.Forms.Timer? _statusTimer;
 
     /// <summary>右下角状态：待机 / 识别中 / 翻译中 / 完成 / 出错</summary>
@@ -280,14 +280,6 @@ public class OverlayForm : Form
         RenderLayer();
     }
 
-    public void StreamBegin(string source)
-    {
-        _pairs = new List<(string, string)> { (source, "") };
-        _showState = false;
-        _showSource = true;
-        RenderLayer();
-    }
-
     /// <summary>清空显示：连历史一起擦掉，回到「待机」空状态</summary>
     public void ClearDisplay()
     {
@@ -337,7 +329,7 @@ public class OverlayForm : Form
 
     private void OnDragDown(object? sender, MouseEventArgs e)
     {
-        if (ClickThrough || e.Button != MouseButtons.Left) return;
+        if (e.Button != MouseButtons.Left) return;
 
         var p = PointToClient(Cursor.Position);
         int sbLeft = ClientSize.Width - ScrollBarRightGap;
@@ -613,7 +605,6 @@ public class OverlayForm : Form
         // 贴底模式：先判断位置对不对，再赋值并同步重画一次
         // （顺序不能反，否则会先赋值导致判断永远为假、不再重画）
         if (_stickToBottom && Math.Abs(_scrollOffset - maxOffset) > 0.5f)
-        if (_stickToBottom && Math.Abs(_scrollOffset - maxOffset) > 0.5f)
         {
             _scrollOffset = maxOffset;
             _needsRepaint = true;   // 提交这一帧后再画一次（不能在这里递归，会覆盖结果）
@@ -627,11 +618,6 @@ public class OverlayForm : Form
     private void DrawStatus(Graphics g, int w, int h)
     {
         // “完成”只显示几秒，超时回“待机”
-        if (_statusUntil != DateTime.MaxValue && DateTime.UtcNow > _statusUntil)
-        {
-            _status = "待机";
-            _statusUntil = DateTime.MaxValue;
-        }
 
         float px = Math.Max(10f, _fontSizePx * 0.58f * DpiScale);
         using var f = new Font("Microsoft YaHei UI", px, FontStyle.Regular, GraphicsUnit.Pixel);
@@ -700,14 +686,6 @@ public class OverlayForm : Form
         }
     }
 
-    public void SetClickThrough(bool on)
-    {
-        ClickThrough = on;
-        int ex = GetWindowLong(Handle, GWL_EXSTYLE);
-        ex = on ? (ex | WS_EX_TRANSPARENT) : (ex & ~WS_EX_TRANSPARENT);
-        SetWindowLong(Handle, GWL_EXSTYLE, ex);
-    }
-
     // ---------------- 命中测试 ----------------
 
     protected override void WndProc(ref Message m)
@@ -717,6 +695,12 @@ public class OverlayForm : Form
         if (m.Msg == WM_PAINT)
         {
             ValidateRect(Handle, IntPtr.Zero);
+            return;
+        }
+
+        if (m.Msg == 0x00A3)   // WM_NCLBUTTONDBLCLK：正文是 HTCAPTION，双击会触发最大化
+        {
+            m.Result = IntPtr.Zero;
             return;
         }
 
@@ -735,7 +719,6 @@ public class OverlayForm : Form
 
         if (m.Msg == WM_NCHITTEST)
         {
-            if (ClickThrough) { m.Result = (IntPtr)HTTRANSPARENT; return; }
 
             var p = PointToClient(Cursor.Position);
             int g = Grip;

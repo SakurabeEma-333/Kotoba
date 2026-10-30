@@ -47,6 +47,9 @@ public class SettingsForm : Form
     private readonly NumericUpDown _numBand = new();
     private readonly NumericUpDown _numLine = new();
     private readonly NumericUpDown _numPad = new();
+    private readonly CheckBox _chkBarTransparent = new();
+    private readonly CheckBox _chkBorderLine = new();
+    private readonly CheckBox _chkGrips = new();
 
     // ---- 维护 ----
     private readonly Label _lblCache = new();
@@ -465,7 +468,7 @@ public class SettingsForm : Form
 
         var capPanel = BuildTrackPanel(_trkCap, _lblCap, 0, 100, 10, v => v + "%");
         AddRow(tlp, "取景带浓度", capPanel, 46);
-        AddRow(tlp, "", Hint("只调深浅，越低越不显眼。"), 26);
+        AddRow(tlp, "", Hint("0 = 完全透明（只留细线），100 = 最明显。"), 26);
 
         _numBand.Minimum = 4; _numBand.Maximum = 30;
         AddRow(tlp, "边缘带宽度", _numBand, 32);
@@ -476,6 +479,18 @@ public class SettingsForm : Form
         _numPad.Minimum = 0; _numPad.Maximum = 60;
         AddRow(tlp, "靠近显示距离", _numPad, 32);
         AddRow(tlp, "", Hint("平时只留细线，光标靠近才展开取景带。"), 26);
+
+        _chkBarTransparent.Text = "顶栏背景透明（不画黑底）";
+        AddRow(tlp, "顶栏背景", _chkBarTransparent, 32);
+        AddRow(tlp, "", Hint("打开后只有按钮和文字，不遮挡画面；关掉是深色底。"), 40);
+
+        _chkBorderLine.Text = "显示边框线";
+        AddRow(tlp, "边框线", _chkBorderLine, 32);
+        AddRow(tlp, "", Hint("标记捕获区边界，也是改大小时的参照。"), 40);
+
+        _chkGrips.Text = "显示四角握把";
+        AddRow(tlp, "四角握把", _chkGrips, 32);
+        AddRow(tlp, "", Hint("四角的小 L 形标记；关掉后角落仍可拖，只是看不见。"), 40);
 
         page.Controls.Add(tlp);
         return page;
@@ -701,6 +716,9 @@ public class SettingsForm : Form
         _numBand.Value = Math.Clamp(_profile.CaptureBandWidth, 4, 30);
         _numLine.Value = Math.Clamp(_profile.CaptureLineWidth, 1, 6);
         _numPad.Value = Math.Clamp(_profile.CaptureRevealPad, 0, 60);
+        _chkBarTransparent.Checked = _profile.BarTransparent;
+        _chkBorderLine.Checked = _profile.ShowBorderLine;
+        _chkGrips.Checked = _profile.ShowCornerGrips;
 
         RefreshCacheLabel();
     }
@@ -737,5 +755,8 @@ public class SettingsForm : Form
         _profile.CaptureBandWidth = (int)_numBand.Value;
         _profile.CaptureLineWidth = (int)_numLine.Value;
         _profile.CaptureRevealPad = (int)_numPad.Value;
+        _profile.BarTransparent = _chkBarTransparent.Checked;
+        _profile.ShowBorderLine = _chkBorderLine.Checked;
+        _profile.ShowCornerGrips = _chkGrips.Checked;
     }
 }
